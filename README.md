@@ -8,6 +8,7 @@ A lightweight tournament bracket system, inspired by [evroon/bracket](https://gi
 - **Formats:** single elimination (knockout, automatic byes and seeding) and round robin (league table: 3 points for a win, 1 for a draw, ranked by points, then score difference, then points scored).
 - Winners advance automatically. A finished match can be reopened to fix a mistake, as long as the next match hasn't started.
 - **Only the organiser can edit:** creating, scoring and deleting require signing in with the organiser ID and password. Everyone else gets view-only pages.
+- **Court scorers:** each court has its own PIN (Court 1 = `1111`, Court 2 = `2222`, and so on). Several scorers can enter scores at the same time, but each one can only score and run the clock for matches on their own court.
 - **Courts & schedule:** set the number of courts, a start time and a break, and matches are given a court and start time automatically. You can change them per match.
 - Neon esports-style interface that works on a TV, a laptop and a phone.
 
@@ -36,6 +37,19 @@ Tournament server running on http://localhost:3000
 3. Spectators scan the QR code on the display to follow live results on their phones (same Wi-Fi).
 4. On your phone, open the tournament's **Score** page and tap the 🔒 lock to sign in. You stay signed in on that phone for 30 days.
 5. Pick a match → **▶ Start** the clock → tap points → **✅ Finish match**.
+
+## Court scorer PINs
+
+| Court | Default PIN |
+|-------|-------------|
+| Court 1 | `1111` |
+| Court 2 | `2222` |
+| Court 3 | `3333` |
+| Court N | the court number written 4 times (Court 10 = `10101010`) |
+
+Scorers open the **Score** page, tap the 🔒 lock, choose **Court scorer** and type their PIN. They can score, run the timer, finish and reopen matches on their court only. They can't move matches, create or delete tournaments, or touch other courts.
+
+The organiser can change any court's PIN under **Court scorer PINs** on the Score page. Changing a PIN signs that court's scorer out straight away. Because the default PINs follow an easy pattern, change them if spectators might guess them. Scorer sign-ins last 24 hours.
 
 ## Organiser sign-in
 

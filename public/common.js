@@ -274,13 +274,22 @@
   const getToken = () => { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } };
   const setToken = (v) => { try { v ? localStorage.setItem(TOKEN_KEY, v) : localStorage.removeItem(TOKEN_KEY); } catch {} };
 
-  async function isSignedIn() {
-    if (!getToken()) return false;
+  // Current session: { ok, role: 'admin' | 'court', tid, court }
+  async function me() {
+    if (!getToken()) return { ok: false };
     try {
       const r = await fetch('/api/me', { headers: { authorization: 'Bearer ' + getToken() } }).then((x) => x.json());
       if (!r.ok) setToken('');
-      return r.ok;
-    } catch { return false; }
+      return r;
+    } catch { return { ok: false }; }
+  }
+  const isSignedIn = async () => (await me()).role === 'admin';
+
+  // "Court 3" -> 3; no court -> 1; other names -> null. Must match lib/auth.js.
+  function courtNumber(m) {
+    if (!m.court) return 1;
+    const r = /(\d+)\s*$/.exec(m.court);
+    return r ? Number(r[1]) : null;
   }
 
   function loginDialog() {
@@ -288,46 +297,74 @@
     if (!dlg) {
       dlg = document.createElement('dialog');
       dlg.id = 'loginDlg';
-      dlg.innerHTML = `<form class="login-form" autocomplete="on">
-        <div class="login-head">${icon('lock')}<div><h2>Organiser sign in</h2><p class="muted">Only the organiser can edit scores.</p></div></div>
-        <label for="loginId">ID</label>
-        <input id="loginId" name="username" autocomplete="username" autocapitalize="characters" required>
-        <label for="loginPw">Password</label>
-        <input id="loginPw" name="password" type="password" autocomplete="current-password" required>
+      dlg.innerHTML = `
+        <div class="login-head">${icon('lock')}<div><h2>Sign in to score</h2><p class="muted" id="loginSub"></p></div></div>
+        <div class="tabs login-tabs" id="loginTabs">
+          <button type="button" class="tab" data-mode="pin">${icon('court')}Court scorer</button>
+          <button type="button" class="tab" data-mode="admin">${icon('lock')}Organiser</button>
+        </div>
+        <form class="login-form" id="pinForm" autocomplete="off">
+          <label for="loginPin">Court PIN</label>
+          <input id="loginPin" class="pin-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="one-time-code" placeholder="••••">
+          <p class="muted" style="font-size:13px;margin:6px 0 0">Ask the organiser for your court's PIN.</p>
+        </form>
+        <form class="login-form" id="adminForm" autocomplete="on">
+          <label for="loginId">ID</label>
+          <input id="loginId" name="username" autocomplete="username" autocapitalize="characters">
+          <label for="loginPw">Password</label>
+          <input id="loginPw" name="password" type="password" autocomplete="current-password">
+        </form>
         <p class="login-err" id="loginErr"></p>
-        <div class="row end"><button type="button" value="cancel" class="btn ghost" id="loginCancel">Cancel</button><button class="btn primary" type="submit">Sign in</button></div>
-      </form>`;
+        <div class="row end"><button type="button" class="btn ghost" id="loginCancel">Cancel</button><button class="btn primary" type="button" id="loginGo">Sign in</button></div>`;
       document.body.appendChild(dlg);
     }
     return dlg;
   }
 
-  function signIn() {
+  // opts.tid: offer the court-PIN tab for this tournament. Resolves to the new session, or false.
+  function signIn(opts = {}) {
     const dlg = loginDialog();
-    const form = dlg.querySelector('form');
-    const err = dlg.querySelector('#loginErr');
-    err.textContent = '';
-    dlg.querySelector('#loginPw').value = '';
+    const $ = (sel) => dlg.querySelector(sel);
+    const err = $('#loginErr');
+    let mode = opts.tid ? opts.mode || 'pin' : 'admin';
+    const setMode = (m) => {
+      mode = m;
+      $('#pinForm').style.display = m === 'pin' ? '' : 'none';
+      $('#adminForm').style.display = m === 'admin' ? '' : 'none';
+      dlg.querySelectorAll('#loginTabs .tab').forEach((b) => b.classList.toggle('active', b.dataset.mode === m));
+      $('#loginSub').textContent = m === 'pin' ? 'Court scorers can only score their own court.' : 'The organiser can edit everything.';
+      err.textContent = '';
+      setTimeout(() => (m === 'pin' ? $('#loginPin') : $('#loginId')).focus(), 50);
+    };
+    $('#loginTabs').style.display = opts.tid ? '' : 'none';
+    $('#loginPin').value = '';
+    $('#loginPw').value = '';
+    setMode(mode);
     dlg.showModal();
     return new Promise((resolve) => {
-      const done = (v) => { form.onsubmit = null; dlg.querySelector('#loginCancel').onclick = null; dlg.close(); resolve(v); };
-      dlg.querySelector('#loginCancel').onclick = () => done(false);
-      dlg.oncancel = () => resolve(false);
-      form.onsubmit = async (e) => {
-        e.preventDefault();
-        const btn = form.querySelector('[type=submit]');
+      let finished = false;
+      const done = (v) => { if (finished) return; finished = true; dlg.close(); resolve(v); };
+      dlg.querySelectorAll('#loginTabs .tab').forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
+      $('#loginCancel').onclick = () => done(false);
+      dlg.oncancel = (e) => { e.preventDefault(); done(false); };
+      const go = async () => {
+        const btn = $('#loginGo');
         btn.disabled = true;
         err.textContent = '';
         try {
-          const r = await fetch('/api/login', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ id: dlg.querySelector('#loginId').value, password: dlg.querySelector('#loginPw').value }),
-          }).then((x) => x.json());
-          if (r.ok) { setToken(r.token); done(true); } else err.textContent = r.error || 'Sign in failed';
+          const r = mode === 'pin'
+            ? await fetch(`/api/tournaments/${opts.tid}/court-login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: $('#loginPin').value }) }).then((x) => x.json())
+            : await fetch('/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: $('#loginId').value, password: $('#loginPw').value }) }).then((x) => x.json());
+          if (r.ok) { setToken(r.token); done({ ok: true, role: r.role, tid: r.tid || null, court: r.court || null }); }
+          else err.textContent = r.error || 'Sign in failed';
         } catch { err.textContent = 'Network error'; }
         btn.disabled = false;
       };
+      $('#loginGo').onclick = go;
+      $('#pinForm').onsubmit = (e) => { e.preventDefault(); go(); };
+      $('#adminForm').onsubmit = (e) => { e.preventDefault(); go(); };
+      // Submit on Enter from either form.
+      dlg.querySelectorAll('input').forEach((i) => (i.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } }));
     });
   }
 
@@ -358,7 +395,7 @@
   window.T = {
     socket, now, esc, remaining, fmtClock, fmtDuration, icon, shield, teamShield, teamName, teamColor, roundName, timerHtml,
     matchCard, renderBracket, renderStandings, renderRounds, renderSchedule, renderCourtBoard, renderResults, courts,
-    getToken, isSignedIn, signIn, signOut, api, action, toast,
+    getToken, me, isSignedIn, courtNumber, signIn, signOut, api, action, toast,
     setCurrent: (t) => (current = t),
   };
 })();
