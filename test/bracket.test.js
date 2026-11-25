@@ -69,3 +69,12 @@ test('validation', () => {
   assert.throws(() => createTournament({ name: 'x', format: 'single_elim', teamNames: ['A'], durationSec: 60 }), /2 teams/);
   assert.throws(() => createTournament({ name: 'x', format: 'single_elim', teamNames: ['A', 'B'], durationSec: 1 }), /time limit/);
 });
+
+test('courts and times are scheduled per round', () => {
+  const t = createTournament({ name: 'x', format: 'round_robin', teamNames: names(4), durationSec: 600, courts: 2, startTime: '13:00', breakMin: 5 });
+  const r1 = t.matches.filter((m) => m.round === 1);
+  assert.deepStrictEqual(r1.map((m) => [m.court, m.time]), [['Court 1', '13:00'], ['Court 2', '13:00']]);
+  const r2 = t.matches.filter((m) => m.round === 2);
+  assert.deepStrictEqual(r2.map((m) => m.time), ['13:15', '13:15']);
+  assert.throws(() => createTournament({ name: 'x', format: 'round_robin', teamNames: names(2), durationSec: 60, startTime: '25:00' }), /Start time/);
+});

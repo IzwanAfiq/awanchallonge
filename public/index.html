@@ -2,101 +2,147 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Tournaments</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#120a36">
+  <title>Tournament Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:ital,wght@0,600;0,700;0,800;1,800&family=Inter:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header class="top"><h1>🏆 Tournaments</h1><span class="sub">Live brackets, phone scoring, match timers</span></header>
-  <div class="wrap">
-    <div class="panel">
-      <h2 style="font-size:16px;margin-bottom:10px">Tournaments</h2>
-      <div id="list" class="t-list"><span class="muted">Loading…</span></div>
-    </div>
+  <div class="app">
+    <aside class="sidebar">
+      <a class="brand" href="/"><span id="brandIco"></span><span><b>Awan Challonge</b><small>Tournament Manager</small></span></a>
+      <nav class="nav" id="nav"></nav>
+      <div class="foot muted" style="font-size:12px">Live brackets · phone scoring · match timers</div>
+    </aside>
 
-    <form id="create" class="panel" style="margin-top:16px">
-      <h2 style="font-size:16px">New tournament</h2>
-      <label for="name">Name</label>
-      <input id="name" required maxlength="100" placeholder="e.g. Futsal Cup 2026">
-      <div class="grid-2">
-        <div>
-          <label for="format">Format</label>
-          <select id="format">
-            <option value="single_elim">Single elimination (knockout)</option>
-            <option value="round_robin">Round robin (league)</option>
-          </select>
-        </div>
-        <div>
-          <label>Time limit per match</label>
-          <div class="row" style="flex-wrap:nowrap">
-            <input id="mins" type="number" min="0" max="360" value="10" inputmode="numeric" aria-label="Minutes"><span class="muted">min</span>
-            <input id="secs" type="number" min="0" max="59" value="0" inputmode="numeric" aria-label="Seconds"><span class="muted">sec</span>
-          </div>
-        </div>
+    <main class="main">
+      <div class="page-head">
+        <div class="head-ico" id="headIco"></div>
+        <div class="grow"><h1>Tournaments</h1><div class="sub">Create, run and display your tournaments</div></div>
       </div>
-      <label for="teams">Teams, one per line (in seed order for knockouts)</label>
-      <textarea id="teams" placeholder="Team Harimau&#10;Team Helang&#10;Team Gajah&#10;Team Rusa"></textarea>
-      <label class="row" style="color:var(--text)"><input id="randomize" type="checkbox" style="width:auto"> Shuffle teams randomly</label>
-      <div class="row" style="margin-top:14px"><button class="primary" type="submit">Create tournament</button></div>
-    </form>
+
+      <div class="stats" id="stats"></div>
+
+      <div class="section-title" id="listTitle"></div>
+      <div id="list" class="t-grid"><span class="muted">Loading…</span></div>
+
+      <div id="createWrap" style="margin-top:24px"></div>
+    </main>
   </div>
-
-  <dialog id="pinDlg">
-    <form method="dialog" id="pinForm">
-      <h2 style="font-size:16px">Organiser PIN</h2>
-      <p class="muted" style="margin:6px 0 0">Needed to create, score and delete. Saved on this device.</p>
-      <input id="pinInput" type="password" inputmode="numeric" autocomplete="current-password" style="margin-top:12px">
-      <div class="row" style="margin-top:12px;justify-content:flex-end">
-        <button value="cancel" formnovalidate>Cancel</button><button class="primary" value="ok">OK</button>
-      </div>
-    </form>
-  </dialog>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/common.js"></script>
-  <script src="/pin.js"></script>
   <script>
-    const listEl = document.getElementById('list');
     const FORMAT = { single_elim: 'Knockout', round_robin: 'Round robin' };
+    let signedIn = false;
+    let list = [];
 
-    async function loadList() {
-      const list = await fetch('/api/tournaments').then((r) => r.json());
-      if (!list.length) { listEl.innerHTML = '<span class="muted">No tournaments yet. Create one below.</span>'; return; }
-      listEl.innerHTML = list.map((t) => `
-        <div class="t-item panel" style="padding:12px">
-          <div class="info"><b>${T.esc(t.name)}</b><div class="muted" style="font-size:13px">
-            ${FORMAT[t.format]} · ${t.teams} teams · ${T.fmtDuration(t.durationSec)} per match · ${t.done}/${t.total} played
-            ${t.live ? ` · <span style="color:var(--live)">${t.live} live</span>` : ''}</div></div>
-          <a href="/t/${t.id}"><button>📺 Display</button></a>
-          <a href="/t/${t.id}/score"><button class="primary">📱 Score</button></a>
-          <button class="danger" data-del="${t.id}" data-name="${T.esc(t.name)}">Delete</button>
-        </div>`).join('');
+    document.getElementById('brandIco').innerHTML = T.icon('trophy');
+    document.getElementById('headIco').innerHTML = T.icon('trophy');
+    document.getElementById('listTitle').innerHTML = T.icon('list') + ' All tournaments';
+
+    function renderNav() {
+      document.getElementById('nav').innerHTML = `
+        <a href="/" class="active">${T.icon('home')}<span class="lbl">Dashboard</span></a>
+        ${signedIn
+          ? `<a href="#create">${T.icon('plus')}<span class="lbl">New tournament</span></a>
+             <button id="outBtn" title="Sign out">${T.icon('logout')}<span class="lbl">Sign out</span></button>`
+          : `<button id="inBtn" title="Organiser sign in">${T.icon('lock')}<span class="lbl">Organiser sign in</span></button>`}`;
+      const inBtn = document.getElementById('inBtn');
+      if (inBtn) inBtn.onclick = async () => { signedIn = await T.signIn(); renderAll(); };
+      const outBtn = document.getElementById('outBtn');
+      if (outBtn) outBtn.onclick = async () => { await T.signOut(); signedIn = false; renderAll(); };
     }
-    listEl.addEventListener('click', async (e) => {
+
+    function renderStats() {
+      const live = list.reduce((s, t) => s + t.live, 0);
+      const teams = list.reduce((s, t) => s + t.teams, 0);
+      const matches = list.reduce((s, t) => s + t.total, 0);
+      document.getElementById('stats').innerHTML = `
+        <div class="stat purple"><div class="si">${T.icon('trophy')}</div><div><b>${list.length}</b><span>Tournaments</span></div></div>
+        <div class="stat blue"><div class="si">${T.icon('users')}</div><div><b>${teams}</b><span>Teams</span></div></div>
+        <div class="stat green"><div class="si">${T.icon('calendar')}</div><div><b>${matches}</b><span>Matches</span></div></div>
+        <div class="stat amber"><div class="si">${T.icon('play')}</div><div><b>${live}</b><span>Live now</span></div></div>`;
+    }
+
+    function renderList() {
+      const el = document.getElementById('list');
+      if (!list.length) { el.innerHTML = `<div class="glass empty-state">No tournaments yet.${signedIn ? ' Create one below.' : ' Sign in as organiser to create one.'}</div>`; return; }
+      el.innerHTML = list.map((t) => {
+        const pct = t.total ? Math.round((t.done / t.total) * 100) : 0;
+        return `<div class="glass t-card">
+          <div class="row"><h3 class="grow">${T.esc(t.name)}</h3>${t.live ? `<span class="badge live">${t.live} LIVE</span>` : ''}</div>
+          <div class="facts"><span>${FORMAT[t.format]}</span><span>${t.teams} teams</span><span>${t.courts} court${t.courts > 1 ? 's' : ''}</span><span>${T.fmtDuration(t.durationSec)} / match</span></div>
+          <div><div class="row muted" style="font-size:12px;margin-bottom:4px"><span class="grow">Progress</span><span>${t.done}/${t.total} played</span></div><div class="progress"><i style="width:${pct}%"></i></div></div>
+          <div class="row">
+            <a class="btn" href="/t/${t.id}">${T.icon('tv')} Live display</a>
+            <a class="btn primary grow" href="/t/${t.id}/score">${T.icon('phone')} Score</a>
+            ${signedIn ? `<button class="btn danger" data-del="${t.id}" data-name="${T.esc(t.name)}" title="Delete">✕</button>` : ''}
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    function renderCreate() {
+      const w = document.getElementById('createWrap');
+      if (!signedIn) {
+        w.innerHTML = `<div class="glass signin-card">${T.icon('lock')}<p>Sign in as organiser to create tournaments and edit scores.</p><button class="btn primary" id="inBtn2">Organiser sign in</button></div>`;
+        document.getElementById('inBtn2').onclick = async () => { signedIn = await T.signIn(); renderAll(); };
+        return;
+      }
+      if (document.getElementById('create')) return; // keep what's being typed
+      w.innerHTML = `
+      <form id="create" class="glass panel">
+        <div class="section-title">${T.icon('plus')} New tournament</div>
+        <label for="name">Tournament name</label>
+        <input id="name" required maxlength="100" placeholder="e.g. Futsal Cup 2026">
+        <div class="grid-2">
+          <div><label for="format">Format</label>
+            <select id="format"><option value="single_elim">Single elimination (knockout)</option><option value="round_robin">Round robin (league)</option></select></div>
+          <div><label>Time limit per match</label>
+            <div class="row" style="flex-wrap:nowrap"><input id="mins" type="number" min="0" max="360" value="10" inputmode="numeric" aria-label="Minutes"><span class="muted">min</span><input id="secs" type="number" min="0" max="59" value="0" inputmode="numeric" aria-label="Seconds"><span class="muted">sec</span></div></div>
+        </div>
+        <div class="grid-3">
+          <div><label for="courts">Courts</label><input id="courts" type="number" min="1" max="32" value="1" inputmode="numeric"></div>
+          <div><label for="start">First match starts (optional)</label><input id="start" type="time"></div>
+          <div><label for="brk">Break between matches (min)</label><input id="brk" type="number" min="0" max="240" value="5" inputmode="numeric"></div>
+        </div>
+        <label for="teams">Teams, one per line (in seed order for knockouts)</label>
+        <textarea id="teams" placeholder="Team Harimau&#10;Team Helang&#10;Team Gajah&#10;Team Rusa"></textarea>
+        <label class="check"><input id="randomize" type="checkbox"> Shuffle teams randomly</label>
+        <div class="row" style="margin-top:16px"><button class="btn primary" type="submit">${T.icon('trophy')} Create tournament</button></div>
+      </form>`;
+      document.getElementById('create').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const v = (id) => document.getElementById(id).value;
+        const body = {
+          name: v('name'), format: v('format'),
+          durationSec: (+v('mins') || 0) * 60 + (+v('secs') || 0),
+          courts: +v('courts') || 1, startTime: v('start'), breakMin: +v('brk') || 0,
+          teams: v('teams').split('\n'), randomize: document.getElementById('randomize').checked,
+        };
+        const r = await T.api('/api/tournaments', { method: 'POST', body: JSON.stringify(body) });
+        const j = await r.json();
+        if (r.status === 401) { signedIn = false; renderAll(); return T.toast('Please sign in again'); }
+        if (!r.ok) return T.toast(j.error || 'Failed');
+        location.href = '/t/' + j.id;
+      });
+    }
+
+    function renderAll() { renderNav(); renderStats(); renderList(); renderCreate(); }
+
+    document.getElementById('list').addEventListener('click', async (e) => {
       const b = e.target.closest('[data-del]');
       if (!b || !confirm(`Delete "${b.dataset.name}"? This cannot be undone.`)) return;
-      if (!(await ensurePin())) return;
-      const r = await fetch('/api/tournaments/' + b.dataset.del, { method: 'DELETE', headers: { 'x-pin': T.getPin() } });
+      const r = await T.api('/api/tournaments/' + b.dataset.del, { method: 'DELETE' });
       if (!r.ok) T.toast((await r.json()).error || 'Failed');
     });
-    T.socket.on('list-changed', loadList);
-    loadList();
 
-    document.getElementById('create').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      if (!(await ensurePin())) return;
-      const body = {
-        name: document.getElementById('name').value,
-        format: document.getElementById('format').value,
-        durationSec: (+document.getElementById('mins').value || 0) * 60 + (+document.getElementById('secs').value || 0),
-        teams: document.getElementById('teams').value.split('\n'),
-        randomize: document.getElementById('randomize').checked,
-      };
-      const r = await fetch('/api/tournaments', { method: 'POST', headers: { 'content-type': 'application/json', 'x-pin': T.getPin() }, body: JSON.stringify(body) });
-      const j = await r.json();
-      if (!r.ok) return T.toast(j.error || 'Failed');
-      location.href = '/t/' + j.id;
-    });
+    async function load() { list = await fetch('/api/tournaments').then((r) => r.json()); renderStats(); renderList(); }
+    T.socket.on('list-changed', load);
+    T.isSignedIn().then((ok) => { signedIn = ok; renderAll(); load(); });
   </script>
 </body>
 </html>

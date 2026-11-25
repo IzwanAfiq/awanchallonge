@@ -2,77 +2,104 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bracket</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#120a36">
+  <title>Live</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:ital,wght@0,600;0,700;0,800;1,800&family=Inter:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header class="top">
-    <a href="/" aria-label="All tournaments">←</a>
-    <div class="grow"><h1 id="title">Loading…</h1><div class="sub" id="sub"></div></div>
-    <button id="qrBtn">📱 Score on phone</button>
-    <button id="fsBtn" title="Fullscreen">⛶</button>
-  </header>
-  <div class="wrap" style="max-width:none">
-    <div id="live"></div>
-    <div id="main"></div>
-  </div>
-  <div class="qr-box" id="qr">
-    <img id="qrImg" alt="QR code for the scoring page">
-    <div id="qrUrl" style="margin-top:6px;word-break:break-all;max-width:180px"></div>
-    <div style="color:#555;margin-top:4px">Scan to score (needs PIN)</div>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="badge-logo" id="logo"></div>
+      <div class="mini-stats" id="mini"></div>
+      <div class="qr-card"><img id="qrImg" alt="QR code for live results"><p id="qrText"></p></div>
+      <nav class="nav" id="nav"></nav>
+    </aside>
+
+    <main class="main">
+      <div class="page-head">
+        <div class="grow">
+          <h1 class="title-italic" id="title">Loading…</h1>
+          <div class="kicker">LIVE MATCHES</div>
+        </div>
+        <div class="row hide-sm"><span class="pill" id="progress"></span><button class="btn" id="fsBtn" title="Fullscreen"></button></div>
+      </div>
+
+      <div id="board"></div>
+      <div class="tabs" id="tabs"></div>
+      <div id="view"></div>
+    </main>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/common.js"></script>
   <script>
     const id = location.pathname.split('/')[2];
-    const FORMAT = { single_elim: 'Knockout', round_robin: 'Round robin' };
+    let state = null;
+    let tab = new URLSearchParams(location.hash.slice(1)).get('tab');
+
+    document.getElementById('fsBtn').innerHTML = T.icon('expand');
+    document.getElementById('qrText').innerHTML = T.icon('phone') + '<span>Scan for<br>Live Results</span>';
+    document.getElementById('nav').innerHTML = `
+      <a href="/" title="All tournaments">${T.icon('home')}<span class="lbl">All tournaments</span></a>
+      <a href="/t/${id}/score" title="Edit scores">${T.icon('edit')}<span class="lbl">Edit scores</span></a>`;
 
     T.socket.on('connect', () => T.socket.emit('join', id));
-    T.socket.on('deleted', () => { document.getElementById('title').textContent = 'Tournament not found'; document.getElementById('main').innerHTML = '<a href="/">Back to all tournaments</a>'; });
+    T.socket.on('deleted', () => { document.getElementById('title').textContent = 'Tournament not found'; document.getElementById('view').innerHTML = '<a href="/">Back to all tournaments</a>'; });
+    T.socket.on('state', (s) => { state = s; T.setCurrent(s.tournament); render(); });
 
-    T.socket.on('state', ({ tournament: t, standings }) => {
-      T.setCurrent(t);
-      document.title = t.name;
+    function tabsFor(t) {
+      const list = t.format === 'single_elim'
+        ? [['bracket', 'bracket', 'Bracket'], ['schedule', 'calendar', 'Schedule'], ['results', 'chart', 'Results']]
+        : [['standings', 'chart', 'Standings'], ['matches', 'list', 'Matches'], ['schedule', 'calendar', 'Schedule'], ['results', 'check', 'Results']];
+      return list;
+    }
+
+    function render() {
+      const t = state.tournament;
+      document.title = t.name + ' · Live';
       document.getElementById('title').textContent = t.name;
+      document.getElementById('logo').innerHTML = `${T.icon('trophy')}<b>${T.esc(t.name)}</b>`;
       const done = t.matches.filter((m) => m.status === 'done').length;
       const total = t.matches.filter((m) => m.status !== 'bye').length;
-      document.getElementById('sub').textContent = `${FORMAT[t.format]} · ${t.teams.length} teams · ${T.fmtDuration(t.durationSec)} per match · ${done}/${total} played`;
+      document.getElementById('progress').textContent = `${done}/${total} played`;
+      document.getElementById('mini').innerHTML = `
+        <div class="mini-stat">${T.icon('users')}<b>${t.teams.length}</b><span>Teams</span></div>
+        <div class="mini-stat">${T.icon('court')}<b>${T.courts(t).length}</b><span>Courts</span></div>`;
 
-      const live = t.matches.filter((m) => m.status === 'live');
-      document.getElementById('live').innerHTML = live.length
-        ? `<div class="section-title">Live now</div><div class="live-strip">${live.map((m) => `
-            <div class="live-card">
-              <div class="top"><span>${T.esc(T.roundName(t, m.round))}${m.court ? ' · ' + T.esc(m.court) : ''}</span><span class="badge live">LIVE</span></div>
-              <div class="teams">
-                <div class="tname">${T.esc(T.teamName(t, m.teamA))}</div>
-                <div class="big">${m.scoreA} – ${m.scoreB}</div>
-                <div class="tname b">${T.esc(T.teamName(t, m.teamB))}</div>
-              </div>
-              ${T.timerHtml(m)}
-            </div>`).join('')}</div>`
-        : '';
+      document.getElementById('board').innerHTML = T.renderCourtBoard(t);
 
-      document.getElementById('main').innerHTML = t.format === 'single_elim'
-        ? `<div class="section-title">Bracket</div>${T.renderBracket(t)}`
-        : `<div class="section-title">Standings</div><div class="panel">${T.renderStandings(t, standings)}</div>${T.renderRounds(t)}`;
+      const tabs = tabsFor(t);
+      if (!tabs.some(([k]) => k === tab)) tab = tabs[0][0];
+      document.getElementById('tabs').innerHTML = tabs.map(([k, ic, label]) => `<button class="tab ${k === tab ? 'active' : ''}" data-tab="${k}">${T.icon(ic)}${label}</button>`).join('');
+      const v = document.getElementById('view');
+      if (tab === 'bracket') v.innerHTML = T.renderBracket(t);
+      else if (tab === 'standings') v.innerHTML = T.renderStandings(t, state.standings);
+      else if (tab === 'matches') v.innerHTML = T.renderRounds(t);
+      else if (tab === 'schedule') v.innerHTML = T.renderSchedule(t);
+      else v.innerHTML = T.renderResults(t);
+    }
+
+    document.getElementById('tabs').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-tab]');
+      if (!b) return;
+      tab = b.dataset.tab;
+      history.replaceState(null, '', '#tab=' + tab);
+      render();
     });
 
-    // QR code pointing at the scoring page. Uses a LAN address if the page was opened via localhost.
-    document.getElementById('qrBtn').addEventListener('click', async () => {
-      const box = document.getElementById('qr');
-      if (box.classList.toggle('show')) {
-        let origin = location.origin;
-        if (/localhost|127\.0\.0\.1/.test(location.hostname)) {
-          const info = await fetch('/api/info').then((r) => r.json());
-          if (info.lan[0]) origin = info.lan[0];
-        }
-        const url = `${origin}/t/${id}/score`;
-        document.getElementById('qrImg').src = '/api/qr?url=' + encodeURIComponent(url);
-        document.getElementById('qrUrl').textContent = url;
+    // QR code for spectators. If opened via localhost, point it at the laptop's Wi-Fi address instead.
+    (async () => {
+      let origin = location.origin;
+      if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
+        const info = await fetch('/api/info').then((r) => r.json()).catch(() => ({ lan: [] }));
+        if (info.lan[0]) origin = info.lan[0];
       }
-    });
+      document.getElementById('qrImg').src = '/api/qr?url=' + encodeURIComponent(`${origin}/t/${id}`);
+    })();
+
     document.getElementById('fsBtn').addEventListener('click', () => {
       if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen?.();
     });

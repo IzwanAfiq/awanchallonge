@@ -3,27 +3,24 @@
 const path = require('path');
 const http = require('http');
 const os = require('os');
-const crypto = require('crypto');
 const express = require('express');
 const { Server } = require('socket.io');
 const QRCode = require('qrcode');
 const Store = require('./lib/store');
+const Auth = require('./lib/auth');
 const { createTournament, applyAction, standings } = require('./lib/bracket');
 
 const PORT = Number(process.env.PORT) || 3000;
-const PIN = String(process.env.ADMIN_PIN || '1234');
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data', 'db.json');
 
 const store = new Store(DATA_FILE);
+const auth = new Auth(store);
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-function pinOk(pin) {
-  const a = crypto.createHash('sha256').update(String(pin || '')).digest();
-  const b = crypto.createHash('sha256').update(PIN).digest();
-  return crypto.timingSafeEqual(a, b);
-}
+const bearer = (req) => (req.get('authorization') || '').replace(/^Bearer\s+/i, '');
+const authed = (req) => auth.check(bearer(req));
 
 function payload(t) {
   return { tournament: t, standings: standings(t), serverNow: Date.now() };
@@ -41,6 +38,7 @@ function summary(t) {
     format: t.format,
     teams: t.teams.length,
     durationSec: t.durationSec,
+    courts: t.courts || 1,
     live: t.matches.filter((m) => m.status === 'live').length,
     done: t.matches.filter((m) => m.status === 'done').length,
     total: t.matches.filter((m) => m.status !== 'bye').length,
@@ -63,10 +61,21 @@ app.get('/api/tournaments/:id', (req, res) => {
   res.json(payload(t));
 });
 
-app.post('/api/check-pin', (req, res) => res.json({ ok: pinOk(req.body && req.body.pin) }));
+app.set('trust proxy', 'loopback');
+
+app.post('/api/login', async (req, res) => {
+  const b = req.body || {};
+  const r = await auth.login(b.id, b.password, req.ip);
+  res.status(r.ok ? 200 : 401).json(r);
+});
+app.post('/api/logout', (req, res) => {
+  auth.logout(bearer(req));
+  res.json({ ok: true });
+});
+app.get('/api/me', (req, res) => res.json({ ok: authed(req) }));
 
 app.post('/api/tournaments', (req, res) => {
-  if (!pinOk(req.get('x-pin'))) return res.status(401).json({ error: 'Wrong PIN' });
+  if (!authed(req)) return res.status(401).json({ error: 'Please sign in' });
   try {
     const b = req.body || {};
     const t = createTournament({
@@ -75,6 +84,9 @@ app.post('/api/tournaments', (req, res) => {
       teamNames: Array.isArray(b.teams) ? b.teams : String(b.teams || '').split('\n'),
       durationSec: b.durationSec,
       randomize: !!b.randomize,
+      courts: b.courts,
+      startTime: b.startTime,
+      breakMin: b.breakMin,
     });
     store.put(t);
     io.emit('list-changed');
@@ -85,7 +97,7 @@ app.post('/api/tournaments', (req, res) => {
 });
 
 app.delete('/api/tournaments/:id', (req, res) => {
-  if (!pinOk(req.get('x-pin'))) return res.status(401).json({ error: 'Wrong PIN' });
+  if (!authed(req)) return res.status(401).json({ error: 'Please sign in' });
   if (!store.get(req.params.id)) return res.status(404).json({ error: 'Not found' });
   store.remove(req.params.id);
   io.to(req.params.id).emit('deleted');
@@ -124,7 +136,7 @@ io.on('connection', (socket) => {
   socket.on('action', (msg, cb) => {
     const reply = typeof cb === 'function' ? cb : () => {};
     if (!msg || typeof msg !== 'object') return reply({ ok: false, error: 'Bad request' });
-    if (!pinOk(msg.pin)) return reply({ ok: false, error: 'Wrong PIN' });
+    if (!auth.check(msg.token)) return reply({ ok: false, error: 'Please sign in', auth: true });
     const t = store.get(msg.tournamentId);
     if (!t) return reply({ ok: false, error: 'Tournament not found' });
     try {
@@ -150,5 +162,5 @@ server.listen(PORT, '0.0.0.0', () => {
   for (const list of Object.values(os.networkInterfaces())) {
     for (const a of list || []) if (a.family === 'IPv4' && !a.internal) console.log(`  On your phone (same Wi-Fi): http://${a.address}:${PORT}`);
   }
-  if (!process.env.ADMIN_PIN) console.log('  WARNING: using default PIN 1234. Set ADMIN_PIN to change it.');
+  console.log(`  Sign in as ${auth.id} to edit scores.`);
 });

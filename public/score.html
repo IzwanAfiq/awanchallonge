@@ -3,91 +3,98 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0f1217">
+  <meta name="theme-color" content="#120a36">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <title>Scorer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:ital,wght@0,600;0,700;0,800;1,800&family=Inter:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="/style.css">
-  <style>button { touch-action: manipulation; } body { user-select: none; -webkit-user-select: none; }</style>
+  <style>body { user-select: none; -webkit-user-select: none; } input { user-select: text; -webkit-user-select: text; }</style>
 </head>
 <body>
-  <div class="score-page">
-    <div class="row"><a id="backLink" class="back" href="#">← Back</a><span class="grow"></span><a id="displayLink" class="back" href="#">📺 Display</a></div>
-    <h1 id="title" style="font-size:18px">Loading…</h1>
+  <div class="score-app">
+    <div class="score-top">
+      <a class="icon-btn" id="backLink" href="#" aria-label="Back"></a>
+      <h1 id="title" class="title-italic">Loading…</h1>
+      <a class="icon-btn" id="displayLink" href="#" aria-label="Live display"></a>
+      <button class="icon-btn" id="authBtn" aria-label="Sign in or out"></button>
+    </div>
     <div id="view"></div>
   </div>
 
-  <dialog id="pinDlg">
-    <form method="dialog">
-      <h2 style="font-size:16px">Organiser PIN</h2>
-      <p class="muted" style="margin:6px 0 0">Enter the PIN to enter scores. It's saved on this phone.</p>
-      <input id="pinInput" type="password" inputmode="numeric" autocomplete="current-password" style="margin-top:12px">
-      <div class="row" style="margin-top:12px;justify-content:flex-end">
-        <button value="cancel" formnovalidate>Cancel</button><button class="primary" value="ok">OK</button>
-      </div>
-    </form>
-  </dialog>
-
   <dialog id="tieDlg">
     <form method="dialog">
-      <h2 style="font-size:16px">Scores are tied</h2>
-      <p class="muted" id="tieText" style="margin:6px 0 12px">Who won the tie-break?</p>
+      <h2 style="font-size:18px">Scores are tied</h2>
+      <p class="muted" style="margin:6px 0 14px">Who won the tie-break?</p>
       <div style="display:grid;gap:8px">
-        <button value="A" id="tieA" class="primary"></button>
-        <button value="B" id="tieB" class="primary" style="background:var(--b);border-color:var(--b)"></button>
-        <button value="draw" id="tieDraw">Record as a draw</button>
-        <button value="cancel">Cancel</button>
+        <button value="A" id="tieA" class="btn blue"></button>
+        <button value="B" id="tieB" class="btn" style="background:linear-gradient(135deg,#f43f5e,#be123c);border-color:#fda4af"></button>
+        <button value="draw" id="tieDraw" class="btn">Record as a draw</button>
+        <button value="cancel" class="btn ghost">Cancel</button>
       </div>
     </form>
   </dialog>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/common.js"></script>
-  <script src="/pin.js"></script>
   <script>
     const tid = location.pathname.split('/')[2];
     const view = document.getElementById('view');
     let t = null;
-    let unlocked = false;
+    let signedIn = false;
     const buzzed = new Set();
 
     document.getElementById('displayLink').href = '/t/' + tid;
+    document.getElementById('displayLink').innerHTML = T.icon('tv');
     const selected = () => new URLSearchParams(location.hash.slice(1)).get('m');
 
     T.socket.on('connect', () => T.socket.emit('join', tid));
     T.socket.on('disconnect', () => T.toast('Connection lost, reconnecting…'));
-    T.socket.on('deleted', () => { view.innerHTML = '<p>Tournament not found. <a href="/">All tournaments</a></p>'; });
+    T.socket.on('deleted', () => { view.innerHTML = '<div class="glass empty-state">Tournament not found. <a href="/">All tournaments</a></div>'; });
     T.socket.on('state', ({ tournament }) => { t = tournament; T.setCurrent(t); render(); });
     window.addEventListener('hashchange', render);
 
-    ensurePin().then((ok) => { unlocked = ok; render(); });
+    async function doSignIn() { signedIn = await T.signIn(); render(); if (signedIn) T.toast('Signed in', 'ok'); }
+    document.getElementById('authBtn').onclick = async () => {
+      if (signedIn) { if (!confirm('Sign out from this phone?')) return; await T.signOut(); signedIn = false; render(); }
+      else doSignIn();
+    };
+    T.isSignedIn().then((ok) => { signedIn = ok; render(); });
 
     function render() {
+      const ab = document.getElementById('authBtn');
+      ab.innerHTML = T.icon(signedIn ? 'logout' : 'lock');
+      ab.title = signedIn ? 'Sign out' : 'Organiser sign in';
       if (!t) return;
       document.title = 'Score · ' + t.name;
       document.getElementById('title').textContent = t.name;
       const mid = selected();
       const m = mid && t.matches.find((x) => x.id === mid);
       const back = document.getElementById('backLink');
-      if (m) { back.href = '#'; back.textContent = '← Matches'; renderScorer(m); }
-      else { back.href = '/'; back.textContent = '← All'; renderList(); }
+      back.innerHTML = '←';
+      back.href = m ? '#' : '/';
+      if (m) renderScorer(m); else renderList();
     }
 
     function renderList() {
       const playable = (m) => m.teamA && m.teamB;
+      const sortT = (a, b) => (a.time || '').localeCompare(b.time || '') || a.round - b.round || (a.court || '').localeCompare(b.court || '', undefined, { numeric: true });
       const groups = [
-        ['Live', t.matches.filter((m) => m.status === 'live')],
-        ['Up next', t.matches.filter((m) => m.status === 'pending' && playable(m))],
-        ['Waiting for teams', t.matches.filter((m) => m.status === 'pending' && !playable(m))],
-        ['Finished', t.matches.filter((m) => m.status === 'done').reverse()],
+        ['play', 'Live', t.matches.filter((m) => m.status === 'live').sort(sortT)],
+        ['clock', 'Up next', t.matches.filter((m) => m.status === 'pending' && playable(m)).sort(sortT)],
+        ['users', 'Waiting for teams', t.matches.filter((m) => m.status === 'pending' && !playable(m))],
+        ['check', 'Finished', t.matches.filter((m) => m.status === 'done').reverse()],
       ];
-      view.innerHTML = (unlocked ? '' : '<p class="panel" style="margin-top:12px">🔒 View only. <a href="#" id="unlock">Enter PIN</a> to score.</p>') +
-        groups.filter(([, ms]) => ms.length).map(([title, ms]) => `
-          <div class="list-group"><h2>${title} (${ms.length})</h2>
-            ${ms.map((m) => `<div class="muted" style="font-size:12px;margin-bottom:2px">${T.esc(T.roundName(t, m.round))}</div>${T.matchCard(t, m, { link: playable(m) ? '#m=' + m.id : undefined })}`).join('')}
+      view.innerHTML = (signedIn
+          ? `<div class="who">${T.icon('check')} Signed in as organiser. Tap a match to score it.</div>`
+          : `<div class="glass signin-card">${T.icon('lock')}<p>View only. Sign in as organiser to edit scores.</p><button class="btn primary" id="signin">Organiser sign in</button></div>`) +
+        groups.filter(([, , ms]) => ms.length).map(([ic, title, ms]) => `
+          <div class="list-group"><h2>${T.icon(ic)} ${title} (${ms.length})</h2>
+            ${ms.map((m) => `<div class="muted" style="font-size:12px;margin:0 0 3px 4px">${T.esc(T.roundName(t, m.round))}</div>${T.matchCard(t, m, { link: playable(m) ? '#m=' + m.id : undefined })}`).join('')}
           </div>`).join('');
-      const u = document.getElementById('unlock');
-      if (u) u.onclick = async (e) => { e.preventDefault(); unlocked = await ensurePin(); render(); };
+      const s = document.getElementById('signin');
+      if (s) s.onclick = doSignIn;
     }
 
     function renderScorer(m) {
@@ -95,56 +102,63 @@
       const b = T.teamName(t, m.teamB);
       const done = m.status === 'done';
       const running = !!m.timer.startedAt;
-      const pad = (side, name, score) => `
+      const dis = signedIn ? '' : 'disabled';
+      const pad = (side, id, name, score) => `
         <div class="team-pad ${side.toLowerCase()}">
-          <div class="tname">${T.esc(name)}</div>
+          <div class="tname">${T.teamShield(t, id)}<span>${T.esc(name)}</span></div>
           <div class="pts">${score}</div>
           <button class="plus" data-act="score" data-team="${side}" data-delta="1">+1</button>
           <div class="small">
-            <button data-act="score" data-team="${side}" data-delta="-1">−1</button>
-            <button data-act="score" data-team="${side}" data-delta="2">+2</button>
-            <button data-act="score" data-team="${side}" data-delta="3">+3</button>
+            <button class="btn" data-act="score" data-team="${side}" data-delta="-1">−1</button>
+            <button class="btn" data-act="score" data-team="${side}" data-delta="2">+2</button>
+            <button class="btn" data-act="score" data-team="${side}" data-delta="3">+3</button>
           </div>
         </div>`;
       const winnerName = m.winner ? T.teamName(t, m.winner) : null;
-      const courtEl = document.getElementById('court');
-      const typing = courtEl && document.activeElement === courtEl ? courtEl.value : null;
+      // Keep whatever is being typed in the court/time boxes across live re-renders.
+      const keep = {};
+      for (const k of ['court', 'mtime']) { const el = document.getElementById(k); if (el && document.activeElement === el) keep[k] = el.value; }
       view.innerHTML = `
-        <div class="scorer ${done || !unlocked ? 'locked' : ''}">
-          <div class="muted" style="text-align:center;margin-top:8px">${T.esc(T.roundName(t, m.round))}${m.court ? ' · ' + T.esc(m.court) : ''}</div>
-          ${done ? `<div class="done-banner">✅ Final${winnerName ? ' · ' + T.esc(winnerName) + ' won' : ' · Draw'}</div>` : ''}
-          <div class="clock-wrap">${T.timerHtml(m)}</div>
-          ${done ? '' : `<div class="clock-btns">
-            <button data-act="timerAdjust" data-seconds="-60" ${unlocked ? '' : 'disabled'}>−1m</button>
-            <button data-act="timerAdjust" data-seconds="-10" ${unlocked ? '' : 'disabled'}>−10s</button>
-            <button data-act="${running ? 'timerPause' : 'timerStart'}" class="${running ? '' : 'primary'}" ${unlocked ? '' : 'disabled'}>${running ? '⏸ Pause' : '▶ Start'}</button>
-            <button data-act="timerAdjust" data-seconds="10" ${unlocked ? '' : 'disabled'}>+10s</button>
-            <button data-act="timerAdjust" data-seconds="60" ${unlocked ? '' : 'disabled'}>+1m</button>
-          </div>`}
-          <div class="teams">${pad('A', a, m.scoreA)}${pad('B', b, m.scoreB)}</div>
-          <div class="actions">
-            ${!unlocked ? '<button id="unlock2" class="primary">🔒 Enter PIN to score</button>' : done
-              ? '<button data-act="reopen">↩ Reopen match (fix score)</button>'
-              : `<button data-act="finish" class="primary" style="background:var(--win);border-color:var(--win)">✅ Finish match</button>
-                 <div class="row" style="flex-wrap:nowrap"><input id="court" placeholder="Court / field (optional)" value="${T.esc(m.court)}" maxlength="30"><button data-act="setCourt">Save</button></div>
-                 <button data-act="timerReset" class="danger">Reset timer</button>`}
+        <div class="scorer ${done || !signedIn ? 'locked' : ''}">
+          <div class="head-chip"><span class="pill">${T.esc(T.roundName(t, m.round))}</span>${m.court || m.time ? `<span class="pill">${T.icon('court')}${T.esc([m.court, m.time].filter(Boolean).join(' · '))}</span>` : ''}${m.status === 'live' ? '<span class="badge live" style="align-self:center">LIVE</span>' : ''}</div>
+          ${done ? `<div class="done-banner">${T.icon('check')} Final${winnerName ? ' · ' + T.esc(winnerName) + ' won' : ' · Draw'}</div>` : ''}
+          ${!signedIn ? `<div class="glass signin-card" style="padding:12px">${T.icon('lock')}<p style="margin:6px 0 10px">View only. Sign in to edit this match.</p><button class="btn primary" id="signin2">Organiser sign in</button></div>` : ''}
+          <div class="glass clock-panel">
+            ${T.timerHtml(m)}
+            <div class="limit">Time limit ${T.fmtDuration(Math.round(m.timer.duration / 1000))}</div>
+            ${done ? '' : `<div class="clock-btns">
+              <button class="btn" data-act="timerAdjust" data-seconds="-60" ${dis}>−1m</button>
+              <button class="btn" data-act="timerAdjust" data-seconds="-10" ${dis}>−10s</button>
+              <button class="btn ${running ? '' : 'primary'}" data-act="${running ? 'timerPause' : 'timerStart'}" ${dis}>${running ? '⏸ Pause' : '▶ Start'}</button>
+              <button class="btn" data-act="timerAdjust" data-seconds="10" ${dis}>+10s</button>
+              <button class="btn" data-act="timerAdjust" data-seconds="60" ${dis}>+1m</button>
+            </div>`}
           </div>
+          <div class="teams">${pad('A', m.teamA, a, m.scoreA)}${pad('B', m.teamB, b, m.scoreB)}</div>
+          ${signedIn ? `<div class="actions">
+            ${done
+              ? '<button class="btn" data-act="reopen">↩ Reopen match (fix score)</button>'
+              : `<button class="btn green" data-act="finish">${T.icon('check')} Finish match</button>
+                 <div class="edit-row"><input id="court" placeholder="Court" value="${T.esc(m.court)}" maxlength="30" aria-label="Court"><input id="mtime" type="time" value="${T.esc(m.time)}" aria-label="Start time"><button class="btn" data-act="setCourt">Save</button></div>
+                 <button class="btn danger" data-act="timerReset">Reset timer</button>`}
+          </div>` : ''}
         </div>`;
-      if (typing !== null) { const c = document.getElementById('court'); if (c) { c.value = typing; c.focus(); } }
-      const u = document.getElementById('unlock2');
-      if (u) u.onclick = async () => { unlocked = await ensurePin(); render(); };
+      for (const [k, v] of Object.entries(keep)) { const el = document.getElementById(k); if (el) { el.value = v; el.focus(); } }
+      const s2 = document.getElementById('signin2');
+      if (s2) s2.onclick = doSignIn;
     }
 
     view.addEventListener('click', async (e) => {
       const btn = e.target.closest('button[data-act]');
       if (!btn || !t) return;
+      if (!signedIn) return doSignIn();
       const m = t.matches.find((x) => x.id === selected());
       if (!m) return;
       const act = btn.dataset.act;
       const p = { matchId: m.id };
       if (act === 'score') { p.team = btn.dataset.team; p.delta = +btn.dataset.delta; navigator.vibrate?.(15); }
       if (act === 'timerAdjust') p.seconds = +btn.dataset.seconds;
-      if (act === 'setCourt') p.court = document.getElementById('court').value;
+      if (act === 'setCourt') { p.court = document.getElementById('court').value; p.time = document.getElementById('mtime').value; }
       if (act === 'timerReset' && !confirm('Reset the timer to the full time limit?')) return;
       if (act === 'reopen' && !confirm('Reopen this match to change the score?')) return;
       if (act === 'finish') {
@@ -165,7 +179,7 @@
       btn.disabled = false;
       if (!res.ok) {
         T.toast(res.error);
-        if (res.error === 'Wrong PIN') { T.setPin(''); unlocked = false; render(); }
+        if (res.auth) { await T.signOut(); signedIn = false; render(); }
       } else if (act === 'setCourt') T.toast('Saved', 'ok');
       else if (act === 'finish') location.hash = '';
     });
@@ -183,9 +197,8 @@
       }
     }, 500);
 
-    // Keep the phone screen awake while scoring.
-    let lock = null;
-    async function wake() { try { lock = await navigator.wakeLock?.request('screen'); } catch {} }
+    // Keep the screen awake while scoring.
+    async function wake() { try { await navigator.wakeLock?.request('screen'); } catch {} }
     document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && wake());
     wake();
   </script>
